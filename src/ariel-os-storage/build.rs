@@ -13,6 +13,7 @@ fn main() {
         "stm32u073kc",
         "stm32u083mc",
         "stm32l475vg",
+        "stm32l496ag",
         "nrf5340-net",
         "stm32wle5jc",
     ]) {

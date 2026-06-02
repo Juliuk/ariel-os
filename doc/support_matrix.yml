@@ -816,6 +816,30 @@ chips:
       ble: not_available
       ethernet: not_available
 
+  stm32l496ag:
+    name: STM32L496AG
+    manufacturer: STMicroelectronics
+    support:
+      gpio: supported
+      debug_channel: supported
+      ethernet_over_usb:
+        status: not_currently_supported
+        comments:
+          - "[USB does not enumerate](https://github.com/embassy-rs/embassy/issues/2376), [workaround](https://github.com/ariel-os/ariel-os/pull/1126)"
+      hwrng: supported
+      i2c_controller: needs_testing
+      spi_main: needs_testing
+      uart: needs_testing
+      logging: supported
+      storage:
+        status: supported_with_caveats
+        comments:
+          - removing items not supported
+      wifi: not_available
+      ble: not_available
+      ethernet: not_available
+      user_usb: needs_testing
+
   stm32u073kc:
     name: STM32U073KC
     manufacturer: STMicroelectronics
@@ -1314,6 +1338,14 @@ builders:
       After opening the case, use the JP2/SWD connector (marked "MCU SWD") with an SWD debug probe (e.g., the STLINK-V3MINIE):
       do note that JP2 is not keyed, the red wire of the ribbon cable must be closer to the JP2 pin marked "1" on the PCB (close to the POWER switch).
 
+  stm32l496g-disco:
+    chip: stm32l496ag
+    tier: "1"
+    support:
+      user_usb: needs_testing
+      wifi: not_available
+      ethernet_over_usb: not_currently_supported
+
   stm32u083c-dk:
     chip: stm32u083mc
     tier: "1"
@@ -1541,6 +1573,11 @@ boards:
     url: https://web.archive.org/web/20250507145935/https://www.st.com/en/evaluation-tools/steval-mkboxpro.html
     builders:
       - st-steval-mkboxpro
+
+  - name: STM32L496G-DISCO
+    url: https://web.archive.org/web/20260305143452/https://www.st.com/en/evaluation-tools/32l496gdiscovery.html
+    builders:
+      - stm32l496g-disco
 
   - name: STM32U083C-DK
     url: https://web.archive.org/web/20250119131656/https://www.st.com/en/evaluation-tools/stm32u083c-dk.html

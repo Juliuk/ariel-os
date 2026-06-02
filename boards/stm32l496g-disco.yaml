@@ -1,0 +1,20 @@
+version: 0.3.0
+targets:
+  stm32l496g-disco:
+    chip: stm32l496ag
+    ariel:
+      swi: UART5
+    leds:
+      led0:
+        pin: PB13
+        aliases:
+          - LD2
+        color: green
+      led1:
+        pin: PA5
+        aliases:
+          - LD3
+        color: green
+    buttons:
+      button0:
+        pin: PC13

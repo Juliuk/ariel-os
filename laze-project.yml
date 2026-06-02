@@ -656,6 +656,19 @@ contexts:
         - --cfg capability=\"hw/stm32-rng\"
         - --cfg capability=\"hw/stm32-usb-synopsys\" # Needs an external 32.768 kHz crystal to have a stable clock
 
+  - name: stm32l496ag
+    parent: stm32
+    selects:
+      - cortex-m4f
+    provides:
+      - has_hwrng
+      - has_storage_support
+    env:
+      PROBE_RS_CHIP: STM32L496AG
+      RUSTFLAGS:
+        - --cfg capability=\"hw/stm32-rng\"
+        - --cfg capability=\"hw/stm32-usb-synopsys\"
+
   - name: stm32u073kc
     parent: stm32
     selects:

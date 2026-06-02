@@ -44,6 +44,7 @@ ariel:
     - stm32h753zi
     - stm32h755zi
     - stm32l475vg
+    - stm32l496ag
     - stm32u083mc
     - stm32u585ai
     - stm32wb55rg

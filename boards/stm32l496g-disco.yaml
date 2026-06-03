@@ -18,3 +18,22 @@ targets:
     buttons:
       button0:
         pin: PC13
+        aliases:
+          - JOY_CEL
+      button1:
+        pin: PI8
+        aliases:
+          - JOY_UP
+      button2:
+        pin: PI10
+        aliases:
+          - JOY_DOWN
+      button3:
+        pin: PI9
+        aliases:
+          - JOY_LEFT
+      button4:
+        pin: PF11
+        aliases:
+          - JOY_RIGHT
+      

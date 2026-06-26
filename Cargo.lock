@@ -658,8 +658,10 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-executor",
  "embassy-stm32",
+ "embassy-usb-synopsys-otg 0.2.0",
  "embedded-hal-async",
  "embedded-io-async 0.6.1",
+ "heapless 0.9.1",
  "paste",
  "portable-atomic",
  "static_cell",
@@ -1081,14 +1083,6 @@ name = "bumpalo"
 version = "3.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
-
-[[package]]
-name = "button"
-version = "0.0.0"
-dependencies = [
- "ariel-os",
- "ariel-os-boards",
-]
 
 [[package]]
 name = "bytemuck"
@@ -1849,7 +1843,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8d162beedaa69905488a8da94f5ac3edb4dd4788b732fadb7bd120b2625c1976"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -2241,7 +2235,7 @@ dependencies = [
  "embassy-time",
  "embassy-time-driver",
  "embassy-time-queue-utils",
- "embassy-usb-driver",
+ "embassy-usb-driver 0.2.0",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -2275,7 +2269,7 @@ dependencies = [
  "embassy-time",
  "embassy-time-driver",
  "embassy-time-queue-utils",
- "embassy-usb-driver",
+ "embassy-usb-driver 0.2.0",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -2320,8 +2314,8 @@ dependencies = [
  "embassy-time",
  "embassy-time-driver",
  "embassy-time-queue-utils",
- "embassy-usb-driver",
- "embassy-usb-synopsys-otg",
+ "embassy-usb-driver 0.2.0",
+ "embassy-usb-synopsys-otg 0.3.1",
  "embedded-can",
  "embedded-hal 0.2.7",
  "embedded-hal 1.0.0",
@@ -2437,11 +2431,20 @@ dependencies = [
  "embassy-net-driver-channel 0.4.0",
  "embassy-sync 0.8.0",
  "embassy-time",
- "embassy-usb-driver",
+ "embassy-usb-driver 0.2.0",
  "embedded-io-async 0.7.0",
  "heapless 0.9.1",
  "ssmarshal",
  "usbd-hid",
+]
+
+[[package]]
+name = "embassy-usb-driver"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "340c5ce591ef58c6449e43f51d2c53efe1bf0bb6a40cbf80afa0d259c7d52c76"
+dependencies = [
+ "embedded-io-async 0.6.1",
 ]
 
 [[package]]
@@ -2456,13 +2459,24 @@ dependencies = [
 
 [[package]]
 name = "embassy-usb-synopsys-otg"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08e753b23799329780c7ac434264026d0422044d6649ed70a73441b14a6436d7"
+dependencies = [
+ "critical-section",
+ "embassy-sync 0.6.2",
+ "embassy-usb-driver 0.1.1",
+]
+
+[[package]]
+name = "embassy-usb-synopsys-otg"
 version = "0.3.1"
 source = "git+https://github.com/ariel-os/embassy?rev=478df29985c8e0d0ff2e915440c8ca15e36f4403#478df29985c8e0d0ff2e915440c8ca15e36f4403"
 dependencies = [
  "critical-section",
  "defmt 1.1.0",
  "embassy-sync 0.7.2",
- "embassy-usb-driver",
+ "embassy-usb-driver 0.2.0",
 ]
 
 [[package]]
@@ -2822,8 +2836,8 @@ dependencies = [
  "embassy-embedded-hal",
  "embassy-futures",
  "embassy-sync 0.7.2",
- "embassy-usb-driver",
- "embassy-usb-synopsys-otg",
+ "embassy-usb-driver 0.2.0",
+ "embassy-usb-synopsys-otg 0.3.1",
  "embedded-can",
  "embedded-hal 1.0.0",
  "embedded-hal-async",
@@ -4401,6 +4415,16 @@ name = "memchr"
 version = "2.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
+
+[[package]]
+name = "mfx"
+version = "0.0.0"
+dependencies = [
+ "ariel-os",
+ "ariel-os-boards",
+ "ariel-os-stm32",
+ "embedded-hal-async",
+]
 
 [[package]]
 name = "minicbor"

@@ -22,11 +22,13 @@ embassy-stm32 = { workspace = true, default-features = false, features = [
   "rt",
   "unstable-pac",
 ] }
+embassy-usb-synopsys-otg = { workspace = true, default-features = false }
 embedded-hal-async = { workspace = true }
 embedded-io-async = { workspace = true, optional = true }
 paste = { workspace = true }
 portable-atomic = { workspace = true }
 static_cell = { workspace = true }
+heapless = { workspace = true }
 
 [target.'cfg(use_stm32_single_bank)'.dependencies]
 embassy-stm32 = { workspace = true, default-features = false, features = [
@@ -75,7 +77,9 @@ uart = ["dep:embedded-io-async", "ariel-os-embassy-common/uart"]
 storage = ["dep:embassy-embedded-hal"]
 
 ## Enables USB support.
-usb = []
+usb = ["usb-device"]
+usb-device = []
+usb-host = []
 
 ethernet = []
 ethernet-stm32 = ["dep:embassy-embedded-hal", "ethernet"]

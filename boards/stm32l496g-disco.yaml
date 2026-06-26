@@ -36,4 +36,13 @@ targets:
         pin: PF11
         aliases:
           - JOY_RIGHT
+    usb:
+      usb_vbus:
+        pin: PA9
+      usb_id:
+        pin: PA10
+      usb_dm:
+        pin: PA11
+      usb_dp:
+        pin: PA12
       

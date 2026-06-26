@@ -20,6 +20,7 @@ subdirs:
   - http-server
   - i2c-scanner
   - log
+  - mfx
   - minimal
   - power
   - random

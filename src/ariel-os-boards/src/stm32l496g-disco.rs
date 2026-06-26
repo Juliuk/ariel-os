@@ -7,6 +7,7 @@ pub mod pins {
         ButtonPeripherals { button0 : PC13, button1 : PI8, button2 : PI10, button3 : PI9,
         button4 : PF11, }
     );
+    ariel_os_hal::define_peripherals!(UsbPeripherals { usb_vbus : PA9, usb_id : PA10, usb_dm : PA11, usb_dp : PA12, });
 }
 #[allow(unused_variables)]
 pub fn init(peripherals: &mut ariel_os_hal::hal::OptionalPeripherals) {}

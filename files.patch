@@ -1,0 +1,1152 @@
+==> src/ariel-os-stm32/Cargo.toml <==
+[package]
+name = "ariel-os-stm32"
+version = "0.4.0"
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+ariel-os-embassy-common = { workspace = true }
+ariel-os-random = { workspace = true, optional = true }
+ariel-os-stm32-mapping = { path = "../ariel-os-stm32-mapping" }
+ariel-os-utils = { workspace = true }
+defmt = { workspace = true, optional = true }
+embassy-embedded-hal = { workspace = true, optional = true }
+embassy-executor = { workspace = true, default-features = false, features = [
+  "arch-cortex-m",
+] }
+embassy-stm32 = { workspace = true, default-features = false, features = [
+  "memory-x",
+  "optfield",
+  "rt",
+  "unstable-pac",
+] }
+embassy-usb-synopsys-otg = { workspace = true, default-features = false }
+embedded-hal-async = { workspace = true }
+embedded-io-async = { workspace = true, optional = true }
+paste = { workspace = true }
+portable-atomic = { workspace = true }
+static_cell = { workspace = true }
+heapless = { workspace = true }
+
+[target.'cfg(use_stm32_single_bank)'.dependencies]
+embassy-stm32 = { workspace = true, default-features = false, features = [
+  "single-bank",
+] }
+
+[target.'cfg(use_stm32_dual_bank)'.dependencies]
+embassy-stm32 = { workspace = true, default-features = false, features = [
+  "dual-bank",
+] }
+
+[build-dependencies]
+stm32-metapac = { version = "18.0.0", default-features = false, features = [
+  "metadata",
+] }
+
+[features]
+## Enables GPIO interrupt support.
+external-interrupts = [
+  "ariel-os-embassy-common/external-interrupts",
+  "embassy-stm32/exti",
+]
+
+## Enables seeding the random number generator from hardware.
+hwrng = ["dep:ariel-os-random"]
+
+## Enables I2C support.
+# Time-related features are required for timeout support.
+i2c = [
+  "dep:embassy-embedded-hal",
+  "ariel-os-embassy-common/i2c",
+  "embassy-stm32/time",
+  "time",
+]
+
+## Enables SPI support.
+spi = ["dep:embassy-embedded-hal", "ariel-os-embassy-common/spi"]
+
+## Enables a time driver.
+time = ["embassy-stm32/time-driver-any"]
+
+## Enables UART support.
+uart = ["dep:embedded-io-async", "ariel-os-embassy-common/uart"]
+
+## Enables storage support.
+storage = ["dep:embassy-embedded-hal"]
+
+## Enables USB support.
+usb = ["usb-device"]
+usb-device = []
+usb-host = []
+
+ethernet = []
+ethernet-stm32 = ["dep:embassy-embedded-hal", "ethernet"]
+
+## Enables defmt support.
+defmt = ["dep:defmt", "embassy-stm32/defmt"]
+
+## Enables the interrupt executor.
+executor-interrupt = ["embassy-executor/executor-interrupt"]
+
+rcc-config-override = []
+
+_test = ["embassy-stm32/stm32wb55rg", "external-interrupts", "i2c", "spi"]
+
+[lints]
+workspace = true
+
+==> src/ariel-os-stm32/src/lib.rs <==
+//! Items specific to the STMicroelectronics STM32 MCUs.
+
+#![no_std]
+#![cfg_attr(nightly, feature(doc_cfg))]
+#![cfg_attr(feature = "rcc-config-override", expect(unsafe_code))]
+#![deny(missing_docs)]
+
+pub mod gpio;
+
+#[doc(hidden)]
+pub mod peripheral {
+    pub use embassy_stm32::Peri;
+}
+
+#[cfg(feature = "external-interrupts")]
+#[doc(hidden)]
+pub mod extint_registry;
+
+#[cfg(feature = "i2c")]
+pub mod i2c;
+
+#[doc(hidden)]
+pub mod identity;
+
+#[cfg(feature = "spi")]
+pub mod spi;
+
+#[cfg(feature = "uart")]
+pub mod uart;
+
+#[cfg(feature = "storage")]
+#[doc(hidden)]
+pub mod storage;
+
+#[cfg(any(feature = "usb-device", feature = "usb-host"))]
+#[doc(hidden)]
+pub mod usb;
+
+
+#[cfg(feature = "ethernet")]
+#[doc(hidden)]
+pub mod ethernet;
+
+use embassy_stm32::Config;
+
+#[doc(hidden)]
+pub use embassy_stm32::{OptionalPeripherals, Peri, PeripheralType, Peripherals, interrupt};
+
+pub use embassy_stm32::peripherals;
+
+#[cfg(feature = "executor-interrupt")]
+pub(crate) use embassy_executor::InterruptExecutor as Executor;
+
+#[cfg(feature = "hwrng")]
+#[doc(hidden)]
+pub mod hwrng;
+
+#[cfg(feature = "executor-interrupt")]
+include!(concat!(env!("OUT_DIR"), "/swi.rs"));
+
+#[cfg(capability = "hw/stm32-dual-core")]
+use {core::mem::MaybeUninit, embassy_stm32::SharedData};
+
+// Ariel OS doesn't support the second core yet, but upstream needs this.
+#[cfg(capability = "hw/stm32-dual-core")]
+static SHARED_DATA: MaybeUninit<SharedData> = MaybeUninit::uninit();
+
+#[cfg(feature = "executor-interrupt")]
+#[doc(hidden)]
+pub static EXECUTOR: Executor = Executor::new();
+
+#[doc(hidden)]
+pub trait IntoPeripheral<'a, T: PeripheralType>: private::Sealed {
+    fn into_hal_peripheral(self) -> Peri<'a, T>;
+}
+
+impl<T: PeripheralType> private::Sealed for Peri<'_, T> {}
+
+#[doc(hidden)]
+impl<'a, T: PeripheralType> IntoPeripheral<'a, T> for Peri<'a, T> {
+    fn into_hal_peripheral(self) -> Peri<'a, T> {
+        self
+    }
+}
+
+mod private {
+    pub trait Sealed {}
+}
+
+#[doc(hidden)]
+#[must_use]
+pub fn init() -> OptionalPeripherals {
+    let mut config = Config::default();
+    board_config(&mut config);
+
+    #[cfg(not(capability = "hw/stm32-dual-core"))]
+    let peripherals = embassy_stm32::init(config);
+
+    #[cfg(capability = "hw/stm32-dual-core")]
+    let peripherals = embassy_stm32::init_primary(config, &SHARED_DATA);
+
+    enable_flash_cache();
+
+    OptionalPeripherals::from(peripherals)
+}
+
+fn board_config(config: &mut Config) {
+    cfg_select! {
+        feature = "rcc-config-override" => {
+            unsafe extern "Rust" {
+                fn __ariel_os_rcc_config() -> embassy_stm32::rcc::Config;
+            }
+            config.rcc = unsafe { __ariel_os_rcc_config() };
+        }
+        _ => {
+            config.rcc = rcc_config();
+        }
+    }
+}
+
+// TODO: find better place for this
+#[cfg_attr(feature = "rcc-config-override", expect(dead_code))]
+fn rcc_config() -> embassy_stm32::rcc::Config {
+    #[allow(unused_mut, reason = "conditional compilation")]
+    let mut rcc = embassy_stm32::rcc::Config::default();
+
+    #[cfg(context = "st-b-l475e-iot01a")]
+    {
+        use embassy_stm32::rcc::*;
+
+        // This board has an LSE clock, we can use it to calibrate the MSI clock
+        rcc.ls = LsConfig {
+            rtc: RtcClockSource::LSE,
+            lsi: false,
+            lse: Some(LseConfig {
+                frequency: embassy_stm32::time::Hertz(32768),
+                mode: LseMode::Oscillator(LseDrive::MediumHigh),
+            }),
+        };
+        rcc.hsi = false;
+        // Setting the MSI range to 48 MHz crashes the system. If the source of the issue is found,
+        // we can use MSI as the clock source for the usb peripheral directly and avoid using more PLLs.
+        rcc.msi = Some(MSIRange::RANGE8M);
+        rcc.pll = Some(Pll {
+            source: PllSource::MSI,
+            prediv: PllPreDiv::DIV1, // 8 Mhz
+            mul: PllMul::MUL20,      // 160 MHz
+            divp: None,
+            divq: None,
+            divr: Some(PllRDiv::DIV2), // sysclk 80Mhz (8 / 1  * 20 / 2)
+        });
+        rcc.sys = Sysclk::PLL1_R;
+        rcc.pllsai1 = Some(Pll {
+            source: PllSource::MSI,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL12, // 8 MHz MSI * 12 = 96 MHz
+            divp: None,
+            divq: Some(PllQDiv::DIV2), // USB 48 MHz (8 / 1 * 12 / 2)
+            divr: None,
+        });
+        // With a 32.768 kHz LSE, the MSI clock will be calibrated and considered accurate enough.
+        // Embassy automatically enables MSIPLLEN if the LSE is configured.
+        rcc.mux.clk48sel = mux::Clk48sel::PLLSAI1_Q;
+    }
+
+    #[cfg(context = "stm32l496g-disco")]
+    {
+        use embassy_stm32::rcc::*;
+
+        // This board has an LSE clock, we can use it to calibrate the MSI clock
+        rcc.ls = LsConfig {
+            rtc: RtcClockSource::LSE,
+            lsi: false,
+            lse: Some(LseConfig {
+                frequency: embassy_stm32::time::Hertz(32768),
+                mode: LseMode::Oscillator(LseDrive::MediumHigh),
+            }),
+        };
+        rcc.hsi = false;
+        // Setting the MSI range to 48 MHz crashes the system. If the source of the issue is found,
+        // we can use MSI as the clock source for the usb peripheral directly and avoid using more PLLs.
+        rcc.msi = Some(MSIRange::RANGE8M);
+        rcc.pll = Some(Pll {
+            source: PllSource::MSI,
+            prediv: PllPreDiv::DIV1, // 8 Mhz
+            mul: PllMul::MUL20,      // 160 MHz
+            divp: None,
+            divq: None,
+            divr: Some(PllRDiv::DIV2), // sysclk 80Mhz (8 / 1  * 20 / 2)
+        });
+        rcc.sys = Sysclk::PLL1_R;
+        rcc.pllsai1 = Some(Pll {
+            source: PllSource::MSI,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL12, // 8 MHz MSI * 12 = 96 MHz
+            divp: None,
+            divq: Some(PllQDiv::DIV2), // USB 48 MHz (8 / 1 * 12 / 2)
+            divr: None,
+        });
+        // With a 32.768 kHz LSE, the MSI clock will be calibrated and considered accurate enough.
+        // Embassy automatically enables MSIPLLEN if the LSE is configured.
+        rcc.mux.clk48sel = mux::Clk48sel::PLLSAI1_Q;
+    }
+
+    #[cfg(context = "st-nucleo-wb55")]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hsi48 = Some(Hsi48Config {
+            sync_from_usb: true,
+        }); // needed for USB
+        rcc.sys = Sysclk::PLL1_R;
+        rcc.hse = Some(Hse {
+            freq: embassy_stm32::time::Hertz(32000000),
+            mode: HseMode::Oscillator,
+            prescaler: HsePrescaler::DIV1,
+        });
+        rcc.pll = Some(Pll {
+            source: PllSource::HSE,
+            prediv: PllPreDiv::DIV2,
+            mul: PllMul::MUL10,
+            divp: None,
+            divq: None,
+            divr: Some(PllRDiv::DIV2), // sysclk 80Mhz (32 / 2 * 10 / 2)
+        });
+        rcc.mux.clk48sel = mux::Clk48sel::HSI48;
+    }
+
+    #[cfg(any(context = "stm32f303cb", context = "stm32f303re"))]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hse = Some(Hse {
+            freq: embassy_stm32::time::Hertz(8000000),
+            mode: HseMode::Oscillator,
+        });
+        rcc.pll = Some(Pll {
+            src: PllSource::HSE,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL9,
+        });
+        rcc.ahb_pre = AHBPrescaler::DIV1;
+        rcc.apb1_pre = APBPrescaler::DIV4;
+        rcc.apb2_pre = APBPrescaler::DIV2;
+        rcc.sys = Sysclk::PLL1_P; // 72 MHz (8 / 1 * 9)
+    }
+
+    #[cfg(context = "st-nucleo-f401re")]
+    {
+        use embassy_stm32::rcc::*;
+        rcc.hse = Some(Hse {
+            freq: embassy_stm32::time::Hertz(8000000),
+            mode: HseMode::Bypass,
+        });
+        rcc.pll_src = PllSource::HSE;
+        rcc.pll = Some(Pll {
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL168,
+            divp: Some(PllPDiv::DIV4),
+            divq: Some(PllQDiv::DIV7),
+            divr: None,
+        });
+        rcc.ahb_pre = AHBPrescaler::DIV1;
+        rcc.apb1_pre = APBPrescaler::DIV4;
+        rcc.apb2_pre = APBPrescaler::DIV2;
+        rcc.sys = Sysclk::PLL1_P;
+    }
+
+    #[cfg(context = "st-nucleo-f767zi")]
+    {
+        use embassy_stm32::rcc::*;
+        rcc.hse = Some(Hse {
+            freq: embassy_stm32::time::Hertz(8000000),
+            mode: HseMode::Bypass,
+        });
+        rcc.pll_src = PllSource::HSE;
+        rcc.pll = Some(Pll {
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL216,
+            divp: Some(PllPDiv::DIV2),
+            divq: None,
+            divr: None,
+        });
+        rcc.ahb_pre = AHBPrescaler::DIV1;
+        rcc.apb1_pre = APBPrescaler::DIV4;
+        rcc.apb2_pre = APBPrescaler::DIV2;
+        rcc.sys = Sysclk::PLL1_P;
+    }
+
+    #[cfg(context = "stm32h755zi")]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hsi = Some(HSIPrescaler::DIV1);
+        rcc.csi = true;
+        rcc.hsi48 = Some(Hsi48Config {
+            sync_from_usb: true,
+        }); // needed for USB
+        rcc.pll1 = Some(Pll {
+            source: PllSource::HSI,
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL50,
+            divp: Some(PllDiv::DIV2),
+            // Required for SPI (configured by `spi123sel`)
+            divq: Some(PllDiv::DIV16), // FIXME: adjust this divider
+            divr: None,
+        });
+        rcc.sys = Sysclk::PLL1_P; // 400 Mhz
+        rcc.ahb_pre = AHBPrescaler::DIV2; // 200 Mhz
+        rcc.apb1_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.apb2_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.apb3_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.apb4_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.voltage_scale = VoltageScale::Scale1;
+        // Set SMPS power config otherwise MCU will not powered after next power-off
+        rcc.supply_config = SupplyConfig::DirectSMPS;
+        rcc.mux.usbsel = mux::Usbsel::HSI48;
+        // Select the clock signal used for SPI1, SPI2, and SPI3.
+        // FIXME: what to do about SPI4, SPI5, and SPI6?
+        rcc.mux.spi123sel = mux::Saisel::PLL1_Q; // Reset value
+    }
+
+    #[cfg(context = "stm32h753zi")]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hsi = Some(HSIPrescaler::DIV1);
+        rcc.csi = true;
+        rcc.hsi48 = Some(Hsi48Config {
+            sync_from_usb: true,
+        }); // needed for USB
+        rcc.pll1 = Some(Pll {
+            source: PllSource::HSI,
+            prediv: PllPreDiv::DIV4,
+            mul: PllMul::MUL50,
+            divp: Some(PllDiv::DIV2),
+            divq: Some(PllDiv::DIV16), // 50 MHz
+            divr: None,
+        });
+        rcc.sys = Sysclk::PLL1_P; // 400 Mhz
+        rcc.ahb_pre = AHBPrescaler::DIV2; // 200 Mhz
+        rcc.apb1_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.apb2_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.apb3_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.apb4_pre = APBPrescaler::DIV2; // 100 Mhz
+        rcc.voltage_scale = VoltageScale::Scale1;
+        rcc.mux.usbsel = mux::Usbsel::HSI48;
+        // Select the clock signal used for SPI1, SPI2, and SPI3.
+        // FIXME: what to do about SPI4, SPI5, and SPI6?
+        rcc.mux.spi123sel = mux::Saisel::PLL1_Q; // Reset value
+    }
+
+    #[cfg(any(context = "stm32u073kc", context = "stm32u083mc"))]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hsi48 = Some(Hsi48Config {
+            sync_from_usb: true,
+        }); // needed for USB
+        // No HSE fitted on the stm32u083c-dk board
+        rcc.hsi = true;
+        rcc.sys = Sysclk::PLL1_R;
+        rcc.pll = Some(Pll {
+            source: PllSource::HSI,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL7,
+            divp: None,
+            divq: None,
+            divr: Some(PllRDiv::DIV2), // sysclk 56Mhz
+        });
+        rcc.mux.clk48sel = mux::Clk48sel::HSI48;
+    }
+
+    #[cfg(context = "st-steval-mkboxpro")]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.ls = LsConfig {
+            rtc: RtcClockSource::LSE,
+            lsi: true,
+            lse: Some(LseConfig {
+                peripherals_clocked: true,
+                frequency: embassy_stm32::time::Hertz(32768),
+                mode: LseMode::Oscillator(LseDrive::MediumHigh),
+            }),
+        };
+        rcc.hsi = true;
+        rcc.hsi48 = Some(Hsi48Config {
+            sync_from_usb: true,
+        }); // needed for USB
+        rcc.sys = Sysclk::PLL1_R;
+        rcc.hse = Some(Hse {
+            freq: embassy_stm32::time::Hertz(16_000_000),
+            mode: HseMode::Oscillator,
+        });
+        rcc.pll1 = Some(Pll {
+            source: PllSource::HSE,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL10,
+            divp: None,
+            divq: None,
+            divr: Some(PllDiv::DIV1), // sysclk 160Mhz (16 / 1 * 10 / 1)
+        });
+        rcc.sys = Sysclk::PLL1_R;
+        rcc.mux.iclksel = mux::Iclksel::HSI48;
+        rcc.voltage_range = VoltageScale::RANGE1;
+    }
+
+    #[cfg(context = "stm32f042k6")]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hsi48 = Some(Hsi48Config {
+            sync_from_usb: true,
+        }); // needed for USB
+        rcc.sys = Sysclk::HSI48;
+        rcc.pll = Some(Pll {
+            src: PllSource::HSI48,
+            prediv: PllPreDiv::DIV2,
+            mul: PllMul::MUL2,
+        });
+    }
+
+    #[cfg(context = "seeedstudio-lora-e5-mini")]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hse = Some(Hse {
+            freq: embassy_stm32::time::Hertz(32_000_000),
+            mode: HseMode::Bypass,
+            prescaler: HsePrescaler::DIV1,
+        });
+        rcc.ls = LsConfig::default_lse();
+        rcc.msi = None;
+        rcc.pll = Some(Pll {
+            source: PllSource::HSE,
+            prediv: PllPreDiv::DIV2,
+            mul: PllMul::MUL6,
+            divp: None,
+            divq: Some(PllQDiv::DIV2), // PLL1_Q clock (32 / 2 * 6 / 2), used for RNG
+            divr: Some(PllRDiv::DIV2), // sysclk 48Mhz clock (32 / 2 * 6 / 2)
+        });
+
+        rcc.sys = Sysclk::PLL1_R;
+    }
+
+    #[cfg(context = "st-nucleo-wba65ri")]
+    {
+        use embassy_stm32::rcc::*;
+
+        rcc.hse = Some(Hse {
+            prescaler: HsePrescaler::DIV1,
+        });
+        rcc.pll1 = Some(Pll {
+            source: PllSource::HSE,
+            prediv: PllPreDiv::DIV2,  // 32 / 2 = 16 MHz
+            mul: PllMul::MUL12,       // 16 * 12 = 192 MHz
+            divp: Some(PllDiv::DIV6), // 192 / 6 = 32 MHz (for SAI1)
+            divq: None,
+            divr: Some(PllDiv::DIV2), // 192 / 2 = 96 MHz (sysclk)
+            frac: None,
+        });
+        rcc.sys = Sysclk::PLL1_R;
+        rcc.voltage_scale = VoltageScale::RANGE1;
+        rcc.mux.otghssel = Otghssel::HSE; // USB OTG HS ref clock from HSE (32 MHz)
+    }
+
+    rcc
+}
+
+fn enable_flash_cache() {
+    // F2 and F4 support these
+    #[cfg(any(context = "stm32f401re", context = "stm32f411re",))]
+    {
+        // reset the instruction cache
+        embassy_stm32::pac::FLASH
+            .acr()
+            .modify(|w| w.set_icrst(true));
+        // enable the instruction cache and prefetch
+        embassy_stm32::pac::FLASH.acr().modify(|w| w.set_icen(true));
+        embassy_stm32::pac::FLASH
+            .acr()
+            .modify(|w| w.set_prften(true));
+        // reset the data cache
+        embassy_stm32::pac::FLASH
+            .acr()
+            .modify(|w| w.set_dcrst(true));
+        embassy_stm32::pac::FLASH
+            .acr()
+            .modify(|w| w.set_dcrst(false));
+        // enable the data cache
+        embassy_stm32::pac::FLASH.acr().modify(|w| w.set_dcen(true));
+    }
+}
+
+==> src/ariel-os-stm32/src/usb/mod.rs <==
+//! USB support.
+//!
+//! Exactly one USB role may be selected for an OTG peripheral.
+
+#[cfg(all(feature = "usb-device", feature = "usb-host"))]
+compile_error!("Select either `usb-device` or `usb-host`, not both.");
+
+#[cfg(not(any(feature = "usb-device", feature = "usb-host")))]
+compile_error!("Select one USB role: `usb-device` or `usb-host`.");
+
+#[cfg(feature = "usb-device")]
+#[path = "main/device.rs"]
+mod implementation;
+
+#[cfg(feature = "usb-host")]
+#[path = "main/host.rs"]
+mod implementation;
+
+pub use implementation::*;
+
+==> src/ariel-os-stm32/src/usb/main/host.rs <==
+//! USB OTG wrapper for STM32L496 targets.
+//!
+//! Embassy 0.4.0 does not expose a dedicated USB host abstraction yet, so this
+//! type currently initializes the available STM32 OTG FS USB driver backend.
+
+use embassy_stm32::{bind_interrupts, peripherals, usb};
+use embassy_usb_synopsys_otg::otg_v1::Otg;
+use static_cell::ConstStaticCell;
+
+/// USB OTG FS configuration.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug)]
+pub struct Config {
+    /// Whether VBUS detection should be enabled.
+    pub vbus_detection: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            vbus_detection: true,
+        }
+    }
+}
+
+bind_interrupts!(struct Irqs {
+    OTG_FS => usb::InterruptHandler<peripherals::USB_OTG_FS>;
+});
+
+// STM32L496G-DISCO USB_OTG_FS base address (from STM32L496 reference manual)
+const USB_OTG_FS_BASE: *mut () = 0x5000_9000 as *mut ();
+
+/// USB OTG FS peripheral wrapper for STM32L496-class targets.
+pub struct UsbOtgFs {
+    inner: usb::Driver<'static, peripherals::USB_OTG_FS>,
+    _config: Config,
+}
+
+impl UsbOtgFs {
+    /// Creates the USB OTG FS host controller with the default configuration.
+    ///
+    /// `usb_dm` and `usb_dp` are semantic USB signal names supplied by the
+    /// board's peripheral mapping. This driver does not expose PA11/PA12 in
+    /// its public API.
+    #[must_use]
+    pub fn new<DM, DP>(
+        usb: embassy_stm32::Peri<'static, peripherals::USB_OTG_FS>,
+        usb_dm: impl crate::IntoPeripheral<'static, DM>,
+        usb_dp: impl crate::IntoPeripheral<'static, DP>,
+    ) -> Self
+    where
+        DM: usb::DmPin<peripherals::USB_OTG_FS>,
+        DP: usb::DpPin<peripherals::USB_OTG_FS>,
+    {
+        Self::new_with_config(usb, usb_dm, usb_dp, Config::default())
+    }
+
+    /// Creates the USB OTG FS host controller with a specific configuration.
+    #[must_use]
+    pub fn new_with_config<DM, DP>(
+        usb: embassy_stm32::Peri<'static, peripherals::USB_OTG_FS>,
+        usb_dm: impl crate::IntoPeripheral<'static, DM>,
+        usb_dp: impl crate::IntoPeripheral<'static, DP>,
+        config: Config,
+    ) -> Self
+    where
+        DM: usb::DmPin<peripherals::USB_OTG_FS>,
+        DP: usb::DpPin<peripherals::USB_OTG_FS>,
+    {
+        static EP_OUT_BUFFER: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0u8; 256]);
+        let ep_out_buffer = EP_OUT_BUFFER.take();
+
+        let mut usb_config = usb::Config::default();
+        usb_config.vbus_detection = config.vbus_detection;
+
+        let inner = usb::Driver::new_fs(
+            usb,
+            Irqs,
+            usb_dp.into_hal_peripheral(),
+            usb_dm.into_hal_peripheral(),
+            ep_out_buffer,
+            usb_config,
+        );
+
+        Self { inner, _config: config }
+    }
+
+    /// Returns the embedded STM32 USB controller.
+    #[must_use]
+    pub fn inner(&mut self) -> &mut usb::Driver<'static, peripherals::USB_OTG_FS> {
+        &mut self.inner
+    }
+
+    /// Returns a reference to the low-level OTG registers.
+    /// Used for direct hardware control (host mode detection, port status polling, etc.).
+    ///
+    /// # Safety
+    ///
+    /// This function creates a register reference from a known valid hardware address
+    /// (USB_OTG_FS_BASE = 0x5000_9000 on STM32L496G-DISCO). The caller must ensure that:
+    /// - The OTG peripheral is actually present on the target device
+    /// - Only one mutable reference to these registers exists at a time
+    /// - This is only called on the correct target MCU
+    #[must_use]
+    #[allow(unsafe_code)]
+    pub fn otg_regs(&self) -> Otg {
+        // SAFETY: USB_OTG_FS_BASE is the correct hardware address for STM32L496G-DISCO.
+        // We're converting it to an OTG register interface for read-only polling.
+        unsafe { Otg::from_ptr(USB_OTG_FS_BASE) }
+    }
+}
+
+// --- Minimal host-mode scaffold (moved from host_scaffold.rs) ---
+/// Information about a connected USB device (minimal).
+pub struct DeviceInfo<'a> {
+    pub vendor: Option<&'a str>,
+    pub product: Option<&'a str>,
+    /// List of files discovered on the device (paths or names).
+    pub files: &'a [&'a str],
+}
+
+/// Filter a list of file names and return only common image/video files.
+pub fn filter_media_files<'a>(files: &'a [&'a str]) -> heapless::Vec<&'a str, 16> {
+    let mut out: heapless::Vec<&'a str, 16> = heapless::Vec::new();
+    for &f in files.iter() {
+        if let Some(ext) = f.rsplit('.').next() {
+            if ext.eq_ignore_ascii_case("mp4")
+                || ext.eq_ignore_ascii_case("mov")
+                || ext.eq_ignore_ascii_case("png")
+                || ext.eq_ignore_ascii_case("jpg")
+                || ext.eq_ignore_ascii_case("jpeg")
+            {
+                let _ = out.push(f);
+            }
+        }
+    }
+    out
+}
+
+/// Simulate a device connection for development and testing.
+pub fn simulate_device_connected() -> DeviceInfo<'static> {
+    // Mock file list representative of a USB stick.
+    static FILES: [&str; 4] = ["DCIM/100MEDIA/IMG_0001.JPG", "video1.MP4", "notes.txt", "movie.MOV"];
+
+    DeviceInfo {
+        vendor: Some("MockVendor"),
+        product: Some("MockUSB"),
+        files: &FILES,
+    }
+}
+
+/// Events generated by the USB host core.
+pub enum HostEvent<'a> {
+    DeviceConnected(DeviceInfo<'a>),
+    DeviceDisconnected,
+}
+
+/// Current state of a USB host port.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostPortState {
+    Disconnected,
+    Attached,
+    Enabled,
+    Suspended,
+    Error,
+}
+
+/// A single USB host port.
+pub struct HostPort {
+    pub id: u8,
+    pub state: HostPortState,
+}
+
+/// Minimal host controller core (placeholder).
+pub struct HostController {
+    _otg: UsbOtgFs,
+    ports: heapless::Vec<HostPort, 4>,
+}
+
+impl HostController {
+    /// Create a host controller from an existing `UsbOtgFs` instance.
+    pub fn from_otg(otg: UsbOtgFs) -> Self {
+        HostController { _otg: otg, ports: heapless::Vec::new() }
+    }
+
+    /// Create and initialize an OTG + host controller in one step.
+    pub fn new<DM, DP>(
+        usb: embassy_stm32::Peri<'static, peripherals::USB_OTG_FS>,
+        usb_dm: impl crate::IntoPeripheral<'static, DM>,
+        usb_dp: impl crate::IntoPeripheral<'static, DP>,
+    ) -> Self
+    where
+        DM: usb::DmPin<peripherals::USB_OTG_FS>,
+        DP: usb::DpPin<peripherals::USB_OTG_FS>,
+    {
+        let otg = UsbOtgFs::new(usb, usb_dm, usb_dp);
+        let controller = HostController::from_otg(otg);
+        // Initialize real host mode on creation
+        controller.init_host_mode();
+        controller
+    }
+
+    /// Initialize host mode by setting GUSBCFG registers (real hardware).
+    fn init_host_mode(&self) {
+        let otg = self._otg.otg_regs();
+        
+        // Set force host mode (GUSBCFG.fhmod = 1) and clear force device mode (GUSBCFG.fdmod = 0)
+        otg.gusbcfg().modify(|w| {
+            w.set_fhmod(true);   // Force host mode
+            w.set_fdmod(false);  // Clear force device mode
+        });
+    }
+
+    /// Return the discovered host ports.
+    pub fn ports(&self) -> &[HostPort] {
+        self.ports.as_slice()
+    }
+
+    /// Query a port's current host state.
+    pub fn port_state(&self, id: u8) -> Option<HostPortState> {
+        self.ports.iter().find(|p| p.id == id).map(|p| p.state)
+    }
+
+    /// Poll the OTG port registers for real device connection events.
+    /// Returns a HostEvent if a device is detected, otherwise None.
+    pub fn poll_port_status(&mut self) -> Option<HostEvent<'static>> {
+        let otg = self._otg.otg_regs();
+        let hprt = otg.hprt().read();
+
+        // Check if a device is connected (HPRT.pcsts)
+        if hprt.pcsts() {
+            // Device is physically connected
+            // Check if we already have this port registered
+            if self.ports.is_empty() {
+                // Register port 1 as connected
+                let _ = self.ports.push(HostPort { id: 1, state: HostPortState::Attached });
+                
+                // Return a device connected event with mock data
+                // (In a real implementation, we would enumerate the device here)
+                return Some(HostEvent::DeviceConnected(simulate_device_connected()));
+            }
+        } else {
+            // Device disconnected
+            if !self.ports.is_empty() {
+                let _ = self.ports.pop();
+                return Some(HostEvent::DeviceDisconnected);
+            }
+        }
+
+        None
+    }
+
+    /// Simulate enumeration / device connect (deprecated, use poll_port_status).
+    #[deprecated(since = "0.1.0", note = "use poll_port_status() for real hardware detection")]
+    pub fn simulate_enumeration(&mut self) -> HostEvent<'static> {
+        let _ = self.ports.push(HostPort { id: 1, state: HostPortState::Enabled });
+        HostEvent::DeviceConnected(simulate_device_connected())
+    }
+}
+==> src/ariel-os-stm32/src/usb/main/device.rs <==
+use embassy_stm32::{Peri, bind_interrupts, peripherals, usb, usb::Driver};
+
+bind_interrupts!(struct Irqs {
+    #[cfg(capability = "hw/stm32-usb-synopsys")]
+    OTG_FS => usb::InterruptHandler<peripherals::USB_OTG_FS>;
+    #[cfg(capability = "hw/stm32-usb")]
+    USB => usb::InterruptHandler<peripherals::USB>;
+    #[cfg(capability = "hw/stm32-usb-drd-fs")]
+    USB_DRD_FS => usb::InterruptHandler<peripherals::USB>;
+    #[cfg(capability = "hw/stm32-usb-fs")]
+    USB_FS => usb::InterruptHandler<peripherals::USB>;
+    #[cfg(capability = "hw/stm32-usb-lp")]
+    USB_LP => usb::InterruptHandler<peripherals::USB>;
+    #[cfg(capability = "hw/stm32-usb-lp-can1-rx0")]
+    USB_LP_CAN1_RX0 => usb::InterruptHandler<peripherals::USB>;
+    #[cfg(capability = "hw/stm32-usb-lp-can-rx0")]
+    USB_LP_CAN_RX0 => usb::InterruptHandler<peripherals::USB>;
+    #[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+    USB_OTG_HS => usb::InterruptHandler<peripherals::USB_OTG_HS>;
+    #[cfg(capability = "hw/stm32-usb-ucpd1-2")]
+    USB_UCPD1_2 => usb::InterruptHandler<peripherals::USB>;
+});
+
+#[cfg(not(any(
+    capability = "hw/stm32-usb-synopsys",
+    capability = "hw/stm32-usb-synopsys-hs"
+)))]
+type UsbPeripheral = peripherals::USB;
+#[cfg(capability = "hw/stm32-usb-synopsys")]
+type UsbPeripheral = peripherals::USB_OTG_FS;
+#[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+type UsbPeripheral = peripherals::USB_OTG_HS;
+
+pub type UsbDriver = Driver<'static, UsbPeripheral>;
+
+pub struct Peripherals {
+    usb: Peri<'static, UsbPeripheral>,
+    #[cfg(not(capability = "hw/stm32-usb-synopsys-hs"))]
+    dp: Peri<'static, peripherals::PA12>,
+    #[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+    dp: Peri<'static, peripherals::PD6>,
+    #[cfg(not(capability = "hw/stm32-usb-synopsys-hs"))]
+    dm: Peri<'static, peripherals::PA11>,
+    #[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+    dm: Peri<'static, peripherals::PD7>,
+}
+
+impl Peripherals {
+    #[must_use]
+    pub fn new(peripherals: &mut crate::OptionalPeripherals) -> Self {
+        Self {
+            #[cfg(not(any(
+                capability = "hw/stm32-usb-synopsys",
+                capability = "hw/stm32-usb-synopsys-hs"
+            )))]
+            usb: peripherals.USB.take().unwrap(),
+            #[cfg(capability = "hw/stm32-usb-synopsys")]
+            usb: peripherals.USB_OTG_FS.take().unwrap(),
+            #[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+            usb: peripherals.USB_OTG_HS.take().unwrap(),
+            #[cfg(not(capability = "hw/stm32-usb-synopsys-hs"))]
+            dp: peripherals.PA12.take().unwrap(),
+            #[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+            dp: peripherals.PD6.take().unwrap(),
+            #[cfg(not(capability = "hw/stm32-usb-synopsys-hs"))]
+            dm: peripherals.PA11.take().unwrap(),
+            #[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+            dm: peripherals.PD7.take().unwrap(),
+        }
+    }
+}
+
+#[cfg(not(any(
+    capability = "hw/stm32-usb-synopsys",
+    capability = "hw/stm32-usb-synopsys-hs"
+)))]
+pub fn driver(peripherals: Peripherals) -> UsbDriver {
+    Driver::new(peripherals.usb, Irqs, peripherals.dp, peripherals.dm)
+}
+
+#[cfg(any(
+    capability = "hw/stm32-usb-synopsys",
+    capability = "hw/stm32-usb-synopsys-hs"
+))]
+pub fn driver(peripherals: Peripherals) -> UsbDriver {
+    use static_cell::ConstStaticCell;
+
+    // buffer size copied from upstream. There's this hint about its sizing:
+    // "An internal buffer used to temporarily store received packets.
+    // Must be large enough to fit all OUT endpoint max packet sizes.
+    // Endpoint allocation will fail if it is too small."
+    static EP_OUT_BUFFER: ConstStaticCell<[u8; 256]> = ConstStaticCell::new([0u8; 256]);
+    let ep_out_buffer = EP_OUT_BUFFER.take();
+    let mut config = embassy_stm32::usb::Config::default();
+
+    // Enable vbus_detection
+    // Note: some boards don't have this wired up and might not require it,
+    // as they are powered through usb!
+    // If you hang on boot, try setting this to "false"!
+    // See https://embassy.dev/book/dev/faq.html#_the_usb_examples_are_not_working_on_my_board_is_there_anything_else_i_need_to_configure
+    // for more information
+    // NOTE(board-config)
+    config.vbus_detection =
+        ariel_os_utils::bool_from_env_or!("CONFIG_VBUS_DETECTION", true, "Enable vbus_detection");
+
+    #[cfg(feature = "executor-interrupt")]
+    {
+        use embassy_stm32::interrupt::{InterruptExt, Priority};
+        crate::SWI.set_priority(Priority::P1);
+
+        #[cfg(capability = "hw/stm32-usb-synopsys")]
+        embassy_stm32::interrupt::OTG_FS.set_priority(Priority::P0);
+        #[cfg(capability = "hw/stm32-usb-synopsys-hs")]
+        embassy_stm32::interrupt::USB_OTG_HS.set_priority(Priority::P0);
+    }
+
+    Driver::new_fs(
+        peripherals.usb,
+        Irqs,
+        peripherals.dp,
+        peripherals.dm,
+        ep_out_buffer,
+        config,
+    )
+}
+
+==> examples/mfx/src/main.rs <==
+#![no_std]
+#![no_main]
+
+mod pins;
+mod mfx;
+
+use ariel_os::{
+    hal,
+    i2c::controller::{Kilohertz, highest_freq_in},
+};
+
+use crate::mfx::Mfx;
+
+#[cfg(feature = "usb-host")]
+use ariel_os_stm32::usb::{HostController, HostEvent};
+
+#[ariel_os::task(autostart, peripherals)]
+async fn mfx(peripherals: pins::Peripherals)
+{
+    let mut i2c_config = hal::i2c::controller::Config::default();
+
+    i2c_config.frequency = const { highest_freq_in(Kilohertz::kHz(100)..=Kilohertz::kHz(400)) };
+
+    let i2c = pins::SensorI2c2::new(peripherals.i2c2.i2c_sda, peripherals.i2c2.i2c_scl, i2c_config);
+
+    let mut mfx = Mfx::new(i2c);
+
+    mfx.init().await.unwrap();
+
+    mfx.lcd_reset().await.unwrap();
+    mfx.enable_usb_host_power().await.unwrap();
+
+    #[cfg(feature = "usb-host")]
+    {
+        let mut host = HostController::new(
+            peripherals.usb.usb,
+            peripherals.usb.usb_dm,
+            peripherals.usb.usb_dp,
+        );
+
+        // Poll the USB host port for real device connection (register-based detection)
+        // In a real application, this would be called periodically (e.g., in a timer task)
+        if let Some(event) = host.poll_port_status() {
+            match event {
+                HostEvent::DeviceConnected(dev) => {
+                    info!("USB device connected: {} {}",
+                        dev.vendor.unwrap_or(""), dev.product.unwrap_or("") );
+
+                    let media = ariel_os_stm32::usb::filter_media_files(dev.files);
+                    for f in media.iter() {
+                        info!("media: {}", f);
+                    }
+                }
+                HostEvent::DeviceDisconnected => {
+                    info!("USB device disconnected");
+                }
+            }
+        } else {
+            info!("No USB device detected (poll_port_status returned None)");
+        }
+    }
+}
+
+/*
+#![no_std]
+#![no_main]
+
+mod controller;
+
+use ariel_os_boards::pins;
+use ariel_os::gpio::{Input, Output, Level, Pull};
+use ariel_os::log::*;
+use ariel_os::time::Timer;
+
+ariel_os::hal::group_peripherals!(Peripherals {
+    leds: pins::LedPeripherals,
+    buttons: pins::ButtonPeripherals,
+});
+
+#[ariel_os::task(autostart, peripherals)]
+async fn mfx(peripherals: Peripherals) {
+    let center = Input::new(peripherals.buttons.button0, Pull::Down);
+    let up     = Input::new(peripherals.buttons.button1, Pull::Down);
+    let down   = Input::new(peripherals.buttons.button2, Pull::Down);
+    let left   = Input::new(peripherals.buttons.button3, Pull::Down);
+    let right  = Input::new(peripherals.buttons.button4, Pull::Down);
+    let mut led0 = Output::new(peripherals.leds.led0, Level::Low);
+    let mut led1 = Output::new(peripherals.leds.led1, Level::Low);
+
+    info!("Button test started");
+
+    loop {
+        if up.is_high() {
+            info!("UP");
+        }
+
+        if down.is_high() {
+            info!("DOWN");
+        }
+
+        if left.is_high() {
+            info!("LEFT");
+        }
+
+        if right.is_high() {
+            info!("RIGHT");
+        }
+
+        if center.is_high() {
+            info!("CENTER");
+        }
+
+        led0.toggle();
+        led1.toggle();
+        Timer::after_millis(20).await;
+    }
+}
+*/
+==> examples/mfx/src/mfx/usb.rs <==
+use embedded_hal_async::i2c::I2c;
+
+use super::Mfx;
+use super::pins::*;
+
+impl<I2C> Mfx<I2C>
+where
+    I2C: I2c,
+{
+    pub(crate) async fn init_usb_host_power(&mut self,) -> Result<(), I2C::Error>
+    {
+        self.set_output(MFX_GP3).await?;
+
+        self.set_high(MFX_GP3).await?;
+
+        Ok(())
+    }
+
+    pub async fn enable_usb_host_power(&mut self,) -> Result<(), I2C::Error>
+    {
+        self.set_low(MFX_GP3).await
+    }
+
+    pub async fn disable_usb_host_power(&mut self,) -> Result<(), I2C::Error>
+    {
+        self.set_high(MFX_GP3).await
+    }
+}
